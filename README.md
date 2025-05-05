@@ -1,3 +1,5 @@
+(Work in progress)
+
 # Events
 
 A protocol-based event bus library for Swift applications, inspired by Vapor Queues.
@@ -15,7 +17,7 @@ A protocol-based event bus library for Swift applications, inspired by Vapor Que
 Add the dependency to your `Package.swift` file:
 
 ```swift
-.package(url: "https://github.com/yourusername/Events.git", from: "1.0.0")
+.package(url: "https://github.com/stalkermv/VaporEvents.git", from: "0.0.1")
 ```
 
 And then add the dependency to your target:
@@ -78,7 +80,7 @@ app.events.subscribe(UserCreatedEvent.self) { event in
 }
 ```
 
-Available Drivers
+### Available Drivers
 - InMemoryEventBus: An in-memory implementation for testing and development.
 
 ## License
