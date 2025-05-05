@@ -5,7 +5,7 @@ import EventsCore
 import Vapor
 
 /// An in-memory implementation of EventBus for testing
-public actor InMemoryEventBus: EventBus {
+public actor EventsMemoryDriver: EventBus {
     /// The logger
     private let logger: Logger
     
@@ -61,13 +61,10 @@ public actor InMemoryEventBus: EventBus {
     }
 }
 
-/// Factory for creating in-memory event bus
-public struct InMemoryEventBusFactory: EventBusFactory {
-    /// Create a new in-memory event bus factory
-    public init() {}
-    
-    /// Create a new in-memory event bus
-    public func makeEventBus(for app: Application) throws -> InMemoryEventBus {
-        InMemoryEventBus(logger: app.logger)
+extension Application.Events.Provider {
+    public static var inMemory: Self {
+        .init { app in
+            app.events.use(custom: EventsMemoryDriver())
+        }
     }
 }

@@ -6,10 +6,10 @@
 //
 import Vapor
 
-// Extensions for common provider patterns
-extension Application.Events {
-    /// Register an event bus factory with the application
-    public func use<Factory: EventBusFactory>(_ factory: Factory) throws {
-        self.use(factory.makeProvider())
-    }
-}
+//// Extensions for common provider patterns
+//extension Application.Events {
+//    /// Register an event bus factory with the application
+//    public func use<Factory: EventBusFactory>(_ factory: Factory) throws {
+//        self.use(factory.makeProvider())
+//    }
+//}

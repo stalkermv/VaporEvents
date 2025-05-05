@@ -13,10 +13,7 @@ public protocol Event: Codable, Sendable {
     static var name: String { get }
     
     /// The payload type of the event
-    associatedtype Payload: Codable
-    
-    /// The payload of the event
-    var payload: Payload { get }
+    associatedtype Payload: Codable = Self
 }
 
 /// Default implementation for Event name

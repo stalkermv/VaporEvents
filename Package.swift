@@ -12,7 +12,7 @@ let package = Package(
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(name: "Events", targets: ["Events"]),
         .library(name: "EventsCore", targets: ["EventsCore"]),
-        .library(name: "EventsInMemory", targets: ["EventsInMemory"]),
+        .library(name: "EventsMemoryDriver", targets: ["EventsMemoryDriver"]),
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
@@ -36,7 +36,7 @@ let package = Package(
             ]
         ),
         .target(
-            name: "EventsInMemory",
+            name: "EventsMemoryDriver",
             dependencies: [
                 "EventsCore"
             ]
@@ -46,7 +46,7 @@ let package = Package(
             dependencies: [
                 "Events",
                 "EventsCore",
-                "EventsInMemory"
+                "EventsMemoryDriver"
             ]
         ),
     ]
