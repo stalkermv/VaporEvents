@@ -87,16 +87,39 @@ extension Application {
         public let application: Application
         
         /// Publish an event to the event bus
-        public func publish<E: Event>(_ event: E) async throws {
-            try await self.driver.publish(event)
+        public func publish<E: Event>(_ event: E, payload: E.Payload) async throws {
+            try await self.driver.publish(
+                event,
+                encoder: configuration.encoder,
+                payload: payload
+            )
+        }
+        
+        /// Publish an event to the event bus
+        public func publish<E: Event>(_ event: E) async throws
+        where E.Payload == E, E: Codable {
+            try await self.driver.publish(
+                event,
+                encoder: configuration.encoder,
+                payload: event
+            )
         }
         
         /// Subscribe to events of a specific type
         public func subscribe<E: Event>(
             _ type: E.Type,
-            handler: @escaping @Sendable (E) async throws -> Void
+            handler: @escaping @Sendable (E.Payload) async throws -> Void
         ) async throws {
-            try await self.driver.subscribe(type, handler: handler)
+            try await self.driver.subscribe(
+                type,
+                decoder: configuration.decoder,
+                handler: handler
+            )
+        }
+        
+        /// Subscribe to events using an EventHandler type
+        public func subscribe<H: EventHandler>(_ handler: H.Type) async throws {
+            try await self.driver.subscribe(handler, application: application)
         }
         
         /// Unsubscribe from events of a specific type
@@ -105,7 +128,8 @@ extension Application {
         }
         
         /// Choose which provider to use.
-        public func use(_ provider: Provider) {
+        public func use(_ provider: Provider, configure: (inout EventsConfiguration) -> Void = { _ in }) {
+            configure(&self.storage.configuration)
             provider.run(self.application)
         }
         

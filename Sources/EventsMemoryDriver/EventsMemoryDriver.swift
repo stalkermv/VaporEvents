@@ -18,7 +18,9 @@ public actor EventsMemoryDriver: EventBus {
     }
     
     /// Publish an event
-    public func publish<E: Event>(_ event: E) async throws {
+    public func publish<E>(_ event: E, encoder: JSONEncoder, payload: E.Payload) async throws
+    where E : EventsCore.Event {
+        
         logger.debug("Publishing event: \(E.name)")
         
         guard let handlers = handlers[E.name] else {
@@ -32,10 +34,12 @@ public actor EventsMemoryDriver: EventBus {
     }
     
     /// Subscribe to events
-    public func subscribe<E: Event>(
+    public func subscribe<E>(
         _ type: E.Type,
-        handler: @escaping @Sendable (E) async throws -> Void
-    ) async throws {
+        decoder: JSONDecoder,
+        handler: @escaping @Sendable (E.Payload) async throws -> Void
+    ) async throws where E : EventsCore.Event {
+
         logger.debug("Subscribing to event: \(E.name)")
         
         if handlers[E.name] == nil {
@@ -43,7 +47,7 @@ public actor EventsMemoryDriver: EventBus {
         }
         
         handlers[E.name]?.append { (event: Any) async throws in
-            guard let typedEvent = event as? E else { return }
+            guard let typedEvent = event as? E.Payload else { return }
             try await handler(typedEvent)
         }
     }

@@ -20,7 +20,7 @@ extension Application.Events.Provider {
         .init { application in
             let driver = EventsNATSDriver(
                 configuration: configuration,
-                logger: logger ?? application.logger
+                logger: logger ?? application.logger,
             )
             
             // Store the driver

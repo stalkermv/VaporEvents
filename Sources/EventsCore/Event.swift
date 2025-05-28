@@ -8,12 +8,12 @@
 import Foundation
 
 /// Protocol that all events must conform to
-public protocol Event: Codable, Sendable {
+public protocol Event: Sendable {
     /// The name of the event, used for routing
     static var name: String { get }
     
     /// The payload type of the event
-    associatedtype Payload: Codable = Self
+    associatedtype Payload: Codable & Sendable = Self
 }
 
 /// Default implementation for Event name

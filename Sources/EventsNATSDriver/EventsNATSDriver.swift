@@ -103,7 +103,7 @@ public actor EventsNATSDriver {
 extension EventsNATSDriver: EventBus {
     
     /// Publish an event
-    public func publish<E: Event>(_ event: E) async throws {
+    public func publish<E: Event>(_ event: E, encoder: JSONEncoder, payload: E.Payload) async throws {
         try await ensureConnected()
         
         // Transform the event name
@@ -111,7 +111,7 @@ extension EventsNATSDriver: EventBus {
         logger.debug("Publishing event: \(E.name) as \(transformedName)")
         
         // Encode the event
-        let data = try JSONEncoder().encode(event)
+        let data = try encoder.encode(payload)
         
         // Create headers if needed
         var headers = NatsHeaderMap()
@@ -124,7 +124,8 @@ extension EventsNATSDriver: EventBus {
     /// Subscribe to events
     public func subscribe<E: Event>(
         _ type: E.Type,
-        handler: @escaping @Sendable (E) async throws -> Void
+        decoder: JSONDecoder,
+        handler: @escaping @Sendable (E.Payload) async throws -> Void
     ) async throws {
         try await ensureConnected()
         
@@ -149,7 +150,7 @@ extension EventsNATSDriver: EventBus {
                     }
                     
                     // Decode the event
-                    let event = try JSONDecoder().decode(E.self, from: payload)
+                    let event = try decoder.decode(E.Payload.self, from: payload)
                     
                     // Call the handler
                     try await handler(event)
