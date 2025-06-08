@@ -19,7 +19,6 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.92.1"),
         .package(url: "https://github.com/vapor/async-kit.git", from: "1.19.0"),
-        //.package(url: "https://github.com/nats-io/nats.swift.git", from: "0.1.0"),
         .package(
             url: "https://github.com/stalkermv/nats.swift.git",
             branch: "main"
