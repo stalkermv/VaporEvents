@@ -18,5 +18,6 @@ public enum EventError: Error {
     case invalidConfiguration(String)
     case notConnected
     case timeout
+    case operationFailed(String)
     case unknown(Error)
 }

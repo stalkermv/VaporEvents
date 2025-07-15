@@ -1,5 +1,5 @@
 //
-//  EventsNATSFactory.swift
+//  Provider.swift
 //  Events
 //
 //  Created by Valeriy Malishevskyi on 06.05.2025.
@@ -20,20 +20,11 @@ extension Application.Events.Provider {
         .init { application in
             let driver = EventsNATSDriver(
                 configuration: configuration,
-                logger: logger ?? application.logger,
+                logger: logger ?? application.logger
             )
             
             // Store the driver
             application.events.use(custom: driver)
-            
-            // Connect in the background
-            Task {
-                do {
-                    try await driver.connect()
-                } catch {
-                    application.logger.error("Failed to connect to NATS: \(error)")
-                }
-            }
         }
     }
 }

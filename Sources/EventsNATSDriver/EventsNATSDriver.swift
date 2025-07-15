@@ -10,26 +10,31 @@ import NIOCore
 import Logging
 import EventsCore
 import Vapor
-import Nats
+import NATS
+import ServiceLifecycle
 
-/// A NATS implementation of EventBus
+/// A NATS implementation of EventBus using SwiftNATSClient
 public actor EventsNATSDriver {
     /// The logger
     private let logger: Logger
     
     /// The NATS client
-    private let nats: NatsClient
+    private let natsClient: NATSClient
+    
+    /// The service group for managing the NATS client lifecycle
+    private let serviceGroup: ServiceGroup
     
     /// The configuration
     private let configuration: EventsNATSConfiguration
     
-    /// The subscriptions
-    private var subscriptions: [String: NatsSubscription] = [:]
+    /// Active subscriptions
+    private var subscriptions: [String: Task<Void, Error>] = [:]
     
-    /// Connection state
-    private var isConnected: Bool {
-        nats.connectedUrl != nil
-    }
+    /// Service group task
+    private var serviceGroupTask: Task<Void, Error>?
+    
+    /// Whether the driver has been started
+    private var isStarted: Bool = false
     
     /// Create a new NATS event bus
     public init(
@@ -38,65 +43,53 @@ public actor EventsNATSDriver {
     ) {
         self.logger = logger
         self.configuration = configuration
+        self.natsClient = NATSClient(
+            configuration: configuration.natsConfiguration,
+            logger: logger
+        )
+        self.serviceGroup = ServiceGroup(
+            configuration: .init(services: [natsClient], logger: logger)
+        )
+    }
+    
+    /// Start the NATS client and service group
+    private func ensureStarted() async throws {
+        guard !isStarted else { return }
         
-        // Configure NATS client options
-        var options = NatsClientOptions()
-            .url(configuration.url)
+        logger.debug("Starting NATS client")
         
-        // Apply authentication if provided
-        if let credentials = configuration.credentials {
-            switch credentials {
-            case .userPass(let username, let password):
-                options = options.usernameAndPassword(username, password)
-            case .jwt(let jwt, let nkey):
-                options = options.nkey(nkey)
-            case .token(let token):
-                options = options.token(token)
+        // Start the service group in the background
+        serviceGroupTask = Task {
+            try await serviceGroup.run()
+        }
+        
+        // Give the client a moment to establish connection
+        try await Task.sleep(for: .milliseconds(100))
+        
+        isStarted = true
+        logger.info("NATS client started successfully")
+    }
+    
+    /// Perform an operation with retry logic
+    private func withRetry<T: Sendable>(
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        
+        for attempt in 1...configuration.maxRetries {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                logger.warning("Operation failed (attempt \(attempt)/\(configuration.maxRetries)): \(error)")
+                
+                if attempt < configuration.maxRetries {
+                    try await Task.sleep(for: .seconds(configuration.retryDelay))
+                }
             }
         }
         
-        // Apply TLS configuration if provided
-        if let tlsConfig = configuration.tlsConfiguration {
-            options = options.requireTls()
-        }
-        
-        // Build the client
-        self.nats = options.build()
-        
-        Task {
-            await registerEventHandlers()
-        }
-    }
-    
-    /// Connect to the NATS server
-    public func connect() async throws {
-        if !isConnected {
-            try await self.nats.connect()
-        }
-    }
-    
-    /// Ensure connection is established before performing operations
-    private func ensureConnected() async throws {
-        if !isConnected {
-            try await connect()
-        }
-    }
-    
-    private func registerEventHandlers() {
-        // Set up event handlers
-        self.nats.on(.connected) { [weak self] _ in
-            self?.logger.info("Connected to NATS server")
-        }
-        
-        self.nats.on(.disconnected) { [weak self] _ in
-            self?.logger.warning("Disconnected from NATS server")
-        }
-        
-        self.nats.on(.error) { [weak self] event in
-            if case let .error(error) = event {
-                self?.logger.error("NATS error: \(error)")
-            }
-        }
+        throw lastError ?? EventError.operationFailed("All retry attempts exhausted")
     }
 }
 
@@ -104,21 +97,21 @@ extension EventsNATSDriver: EventBus {
     
     /// Publish an event
     public func publish<E: Event>(_ event: E, encoder: JSONEncoder, payload: E.Payload) async throws {
-        try await ensureConnected()
+        try await ensureStarted()
         
-        // Transform the event name
-        let transformedName = configuration.eventNameTransformer.transform(E.name)
-        logger.debug("Publishing event: \(E.name) as \(transformedName)")
-        
-        // Encode the event
-        let data = try encoder.encode(payload)
-        
-        // Create headers if needed
-        var headers = NatsHeaderMap()
-        headers.append(try NatsHeaderName("event-type"), NatsHeaderValue(E.name))
-        
-        // Publish to NATS with transformed name
-        try await nats.publish(data, subject: transformedName, headers: headers)
+        try await withRetry { [self] in
+            // Transform the event name
+            let transformedName = self.configuration.eventNameTransformer.transform(E.name)
+            self.logger.debug("Publishing event: \(E.name) as \(transformedName)")
+            
+            // Encode the event payload
+            let data = try encoder.encode(payload)
+            
+            // Publish to NATS
+            try await self.natsClient.publish(subject: transformedName, data: data)
+            
+            self.logger.debug("Successfully published event: \(transformedName)")
+        }
     }
     
     /// Subscribe to events
@@ -127,41 +120,45 @@ extension EventsNATSDriver: EventBus {
         decoder: JSONDecoder,
         handler: @escaping @Sendable (E.Payload) async throws -> Void
     ) async throws {
-        try await ensureConnected()
+        try await ensureStarted()
         
         // Transform the event name
         let transformedName = configuration.eventNameTransformer.transform(E.name)
         logger.debug("Subscribing to event: \(E.name) as \(transformedName)")
         
+        // Check if already subscribed
         guard subscriptions[transformedName] == nil else {
+            logger.debug("Already subscribed to: \(transformedName)")
             return
         }
         
-        // Create subscription if it doesn't exist
-        let subscription = try await nats.subscribe(subject: transformedName)
+        // Create subscription
+        let subscription = natsClient.subscribe(subject: transformedName)
         
         // Start processing messages
-        Task {
+        let subscriptionTask = Task { [weak self] in
             for try await message in subscription {
                 do {
-                    guard let payload = message.payload else {
-                        logger.warning("Received message without payload for \(transformedName)")
-                        continue
-                    }
+                    self?.logger.debug("Received message on subject: \(message.subject)")
                     
-                    // Decode the event
-                    let event = try decoder.decode(E.Payload.self, from: payload)
+                    // Decode the event payload
+                    let eventPayload = try decoder.decode(E.Payload.self, from: message.data)
                     
                     // Call the handler
-                    try await handler(event)
+                    try await handler(eventPayload)
+                    
+                    self?.logger.debug("Successfully processed message for: \(transformedName)")
                 } catch {
-                    logger.error("Error processing message for \(transformedName): \(error)")
+                    self?.logger.error("Error processing message for \(transformedName): \(error)")
+                    // Continue processing other messages
                 }
             }
         }
         
-        // Store the subscription
-        subscriptions[transformedName] = subscription
+        // Store the subscription task
+        subscriptions[transformedName] = subscriptionTask
+        
+        logger.info("Successfully subscribed to: \(transformedName)")
     }
     
     /// Unsubscribe from events
@@ -170,13 +167,13 @@ extension EventsNATSDriver: EventBus {
         let transformedName = configuration.eventNameTransformer.transform(E.name)
         logger.debug("Unsubscribing from event: \(E.name) as \(transformedName)")
         
-        // Get the subscription
-        if let subscription = subscriptions[transformedName] {
-            // Unsubscribe
-            try await subscription.unsubscribe()
-            
-            // Remove from subscriptions
+        // Cancel the subscription task if it exists
+        if let subscriptionTask = subscriptions[transformedName] {
+            subscriptionTask.cancel()
             subscriptions.removeValue(forKey: transformedName)
+            logger.info("Successfully unsubscribed from: \(transformedName)")
+        } else {
+            logger.debug("No active subscription found for: \(transformedName)")
         }
     }
     
@@ -184,21 +181,29 @@ extension EventsNATSDriver: EventBus {
     public func shutdown() async throws {
         logger.debug("Shutting down NATS event bus")
         
-        // Unsubscribe from all subscriptions
-        for (_, subscription) in subscriptions {
-            try? await subscription.unsubscribe()
+        // Cancel all subscription tasks
+        for (subject, task) in subscriptions {
+            logger.debug("Cancelling subscription for: \(subject)")
+            task.cancel()
         }
-        
-        // Clear subscriptions
         subscriptions.removeAll()
         
-        // Disconnect from NATS
-        if isConnected {
-            try await nats.close()
+        // Shutdown the service group
+        if let serviceGroupTask = serviceGroupTask {
+            logger.debug("Triggering graceful shutdown of service group")
+            await serviceGroup.triggerGracefulShutdown()
+            
+            // Wait for the service group to finish
+            do {
+                try await serviceGroupTask.value
+            } catch is CancellationError {
+                // Expected when shutting down
+            } catch {
+                logger.error("Error during service group shutdown: \(error)")
+            }
         }
+        
+        isStarted = false
+        logger.info("NATS event bus shutdown complete")
     }
 }
-
-extension NatsSubscription: @unchecked @retroactive Sendable { }
-extension NatsMessage: @unchecked @retroactive Sendable { }
-extension NatsClient: @unchecked @retroactive Sendable { }

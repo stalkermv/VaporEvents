@@ -32,17 +32,41 @@ public struct CamelCaseToDotSeparatedTransformer: EventNameTransformer {
     public func transform(_ name: String) -> String {
         guard !name.isEmpty else { return name }
         
-        // Convert camelCase to words
+        // Convert camelCase to words, handling consecutive uppercase letters
         var result = ""
-        var previousChar: Character?
+        let characters = Array(name)
         
-        for char in name {
-            if let prev = previousChar, 
-               prev.isLowercase && char.isUppercase {
-                result.append(".")
+        for (index, char) in characters.enumerated() {
+            let isFirst = index == 0
+            let isLast = index == characters.count - 1
+            let previousChar = isFirst ? nil : characters[index - 1]
+            let nextChar = isLast ? nil : characters[index + 1]
+            
+            // Add dot before uppercase letter in these cases:
+            // 1. Previous char is lowercase and current is uppercase (standard camelCase)
+            // 2. Previous char is uppercase, current is uppercase, and next is lowercase (end of acronym)
+            if !isFirst {
+                let shouldAddDot: Bool
+                if let prev = previousChar {
+                    if prev.isLowercase && char.isUppercase {
+                        // Standard camelCase transition: htmlParser -> html.Parser
+                        shouldAddDot = true
+                    } else if prev.isUppercase && char.isUppercase, let next = nextChar, next.isLowercase {
+                        // End of acronym: HTMLParser -> HTML.Parser
+                        shouldAddDot = true
+                    } else {
+                        shouldAddDot = false
+                    }
+                } else {
+                    shouldAddDot = false
+                }
+                
+                if shouldAddDot {
+                    result.append(".")
+                }
             }
+            
             result.append(char.lowercased())
-            previousChar = char
         }
         
         return result

@@ -19,10 +19,7 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.92.1"),
         .package(url: "https://github.com/vapor/async-kit.git", from: "1.19.0"),
-        .package(
-            url: "https://github.com/stalkermv/nats.swift.git",
-            branch: "main"
-        )
+        .package(url: "https://github.com/stalkermv/SwiftNATSClient.git", branch: "main")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -50,7 +47,7 @@ let package = Package(
             name: "EventsNATSDriver",
             dependencies: [
                 "EventsCore",
-                .product(name: "Nats", package: "nats.swift"),
+                .product(name: "NATS", package: "SwiftNATSClient"),
             ]
         ),
         .testTarget(

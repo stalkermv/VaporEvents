@@ -8,48 +8,67 @@
 import Foundation
 import EventsCore
 import Vapor
+import NATS
 
 /// Configuration for the NATS event bus
 public struct EventsNATSConfiguration: Sendable {
-    /// The URL of the NATS server
-    public let url: URL
-    
-    /// Authentication credentials
-    public let credentials: Credentials?
-    
-    /// TLS configuration
-    public let tlsConfiguration: TLSConfiguration?
+    /// The NATS client configuration
+    public let natsConfiguration: NATSClientConfiguration
     
     /// Event name transformer
     public let eventNameTransformer: any EventNameTransformer
     
-    /// Authentication credentials for NATS
-    public enum Credentials: Sendable {
-        /// Username and password authentication
-        case userPass(username: String, password: String)
-        
-        /// JWT authentication
-        case jwt(jwt: String, nkey: String)
-        
-        /// Token authentication
-        case token(String)
-    }
+    /// Retry configuration
+    public let maxRetries: Int
+    public let retryDelay: TimeInterval
     
     /// Create a new NATS configuration
     /// - Parameters:
-    ///   - url: The URL of the NATS server
-    ///   - credentials: Authentication credentials
-    ///   - tlsConfiguration: TLS configuration
+    ///   - natsConfiguration: The underlying NATS client configuration
     ///   - eventNameTransformer: Transformer for event names (default: CamelCaseToDotSeparatedTransformer)
+    ///   - maxRetries: Maximum number of retries for operations
+    ///   - retryDelay: Delay between retries in seconds
     public init(
-        url: URL = URL(string: "nats://localhost:4222")!,
-        credentials: Credentials? = nil,
-        tlsConfiguration: TLSConfiguration? = nil,
-        eventNameTransformer: any EventNameTransformer = CamelCaseToDotSeparatedTransformer()
+        natsConfiguration: NATSClientConfiguration = NATSClientConfiguration(),
+        eventNameTransformer: any EventNameTransformer = CamelCaseToDotSeparatedTransformer(),
+        maxRetries: Int = 3,
+        retryDelay: TimeInterval = 1.0
     ) {
-        self.url = url
-        self.credentials = credentials
-        self.tlsConfiguration = tlsConfiguration
+        self.natsConfiguration = natsConfiguration
         self.eventNameTransformer = eventNameTransformer
+        self.maxRetries = maxRetries
+        self.retryDelay = retryDelay
+    }
+    
+    /// Create a new NATS configuration with common parameters
+    /// - Parameters:
+    ///   - url: NATS server URL
+    ///   - auth: Authentication mode
+    ///   - reconnect: Whether to enable automatic reconnection
+    ///   - maxReconnects: Maximum number of reconnection attempts
+    ///   - reconnectWait: Time to wait between reconnection attempts
+    ///   - eventNameTransformer: Transformer for event names
+    ///   - maxRetries: Maximum number of retries for operations
+    ///   - retryDelay: Delay between retries in seconds
+    public init(
+        url: String = "nats://localhost:4222",
+        auth: NATSAuthMode = .none,
+        reconnect: Bool = true,
+        maxReconnects: Int = 10,
+        reconnectWait: TimeInterval = 2.0,
+        eventNameTransformer: any EventNameTransformer = CamelCaseToDotSeparatedTransformer(),
+        maxRetries: Int = 3,
+        retryDelay: TimeInterval = 1.0
+    ) {
+        self.natsConfiguration = NATSClientConfiguration(
+            url: url,
+            reconnect: reconnect,
+            maxReconnects: maxReconnects,
+            reconnectWait: reconnectWait,
+            auth: auth
+        )
+        self.eventNameTransformer = eventNameTransformer
+        self.maxRetries = maxRetries
+        self.retryDelay = retryDelay
     }
 }
