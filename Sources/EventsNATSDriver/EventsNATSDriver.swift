@@ -11,7 +11,6 @@ import Logging
 import EventsCore
 import Vapor
 import NATS
-import ServiceLifecycle
 
 /// A NATS implementation of EventBus using SwiftNATSClient
 public actor EventsNATSDriver {
@@ -21,17 +20,14 @@ public actor EventsNATSDriver {
     /// The NATS client
     private let natsClient: NATSClient
     
-    /// The service group for managing the NATS client lifecycle
-    private let serviceGroup: ServiceGroup
-    
     /// The configuration
     private let configuration: EventsNATSConfiguration
     
     /// Active subscriptions
     private var subscriptions: [String: Task<Void, Error>] = [:]
     
-    /// Service group task
-    private var serviceGroupTask: Task<Void, Error>?
+    /// Task group for managing NATS client lifecycle and operations
+    private var mainTask: Task<Void, Error>?
     
     /// Whether the driver has been started
     private var isStarted: Bool = false
@@ -47,27 +43,39 @@ public actor EventsNATSDriver {
             configuration: configuration.natsConfiguration,
             logger: logger
         )
-        self.serviceGroup = ServiceGroup(
-            configuration: .init(services: [natsClient], logger: logger)
-        )
     }
     
-    /// Start the NATS client and service group
-    private func ensureStarted() async throws {
+    /// Start the NATS client once using task group pattern
+    private func startClientIfNeeded() async throws {
         guard !isStarted else { return }
         
-        logger.debug("Starting NATS client")
+        logger.debug("Starting NATS client with task group")
         
-        // Start the service group in the background
-        serviceGroupTask = Task {
-            try await serviceGroup.run()
+        // Start the main task that manages NATS client lifecycle
+        mainTask = Task { [self] in
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                // Run NATS client
+                group.addTask {
+                    try await self.natsClient.run()
+                }
+                
+                // Keep the group alive until cancelled
+                for try await _ in group {
+                    // This will run until the group is cancelled
+                }
+            }
         }
-        
-        // Give the client a moment to establish connection
-        try await Task.sleep(for: .milliseconds(100))
         
         isStarted = true
         logger.info("NATS client started successfully")
+    }
+    
+    /// Wait for the client to be ready
+    private func waitForConnection() async throws {
+        // Give the client a moment to establish connection if just started
+        if isStarted {
+            try await Task.sleep(for: .milliseconds(1000))
+        }
     }
     
     /// Perform an operation with retry logic
@@ -97,7 +105,8 @@ extension EventsNATSDriver: EventBus {
     
     /// Publish an event
     public func publish<E: Event>(_ event: E, encoder: JSONEncoder, payload: E.Payload) async throws {
-        try await ensureStarted()
+        try await startClientIfNeeded()
+        try await waitForConnection()
         
         try await withRetry { [self] in
             // Transform the event name
@@ -120,7 +129,8 @@ extension EventsNATSDriver: EventBus {
         decoder: JSONDecoder,
         handler: @escaping @Sendable (E.Payload) async throws -> Void
     ) async throws {
-        try await ensureStarted()
+        try await startClientIfNeeded()
+        try await waitForConnection()
         
         // Transform the event name
         let transformedName = configuration.eventNameTransformer.transform(E.name)
@@ -188,18 +198,19 @@ extension EventsNATSDriver: EventBus {
         }
         subscriptions.removeAll()
         
-        // Shutdown the service group
-        if let serviceGroupTask = serviceGroupTask {
-            logger.debug("Triggering graceful shutdown of service group")
-            await serviceGroup.triggerGracefulShutdown()
+        // Shutdown the NATS client
+        if let mainTask = mainTask {
+            logger.debug("Shutting down NATS client")
+            mainTask.cancel()
             
-            // Wait for the service group to finish
+            // Wait for the main task to complete
             do {
-                try await serviceGroupTask.value
+                try await mainTask.value
             } catch is CancellationError {
                 // Expected when shutting down
+                logger.debug("NATS client task cancelled successfully")
             } catch {
-                logger.error("Error during service group shutdown: \(error)")
+                logger.error("Error during NATS client shutdown: \(error)")
             }
         }
         
